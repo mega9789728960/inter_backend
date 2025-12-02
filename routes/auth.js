@@ -82,7 +82,7 @@ router.post('/verify-email', async (req, res) => {
       return res.status(401).json({ error: 'Token mismatch' });
     }
 
-    if (parseInt(code, 10) !== savedCode) {
+    if (parseInt(code, 10) !== parseInt(savedCode) ) {
       return res.status(400).json({ error: 'Invalid OTP' });
     }
 
