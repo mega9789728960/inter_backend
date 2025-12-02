@@ -8,28 +8,22 @@ import nodemailer from 'nodemailer';
 dotenv.config();
 const router = express.Router();
 
-// =========================
-// 🔒 JWT Auth Middleware
-// =========================
 const authMiddleware = (req, res, next) => {
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "Unauthorized: No token provided" });
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Unauthorized: No token provided' });
   }
 
-  const token = authHeader.split(" ")[1];
+  const token = authHeader.split(' ')[1];
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.user = decoded;
     next();
   } catch {
-    return res.status(401).json({ error: "Invalid or expired token" });
+    return res.status(401).json({ error: 'Invalid or expired token' });
   }
 };
 
-// =========================
-// 📧 Nodemailer setup
-// =========================
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
@@ -38,12 +32,11 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-// =========================
-// 1️⃣ Send Code
-// =========================
 router.post('/send-code', async (req, res) => {
   const { email } = req.body;
-  if (!email) return res.status(400).json({ error: 'Email is required' });
+  if (!email) {
+    return res.status(400).json({ error: 'Email is required' });
+  }
 
   try {
     const code = Math.floor(100000 + Math.random() * 900000);
@@ -60,7 +53,7 @@ router.post('/send-code', async (req, res) => {
     await transporter.sendMail({
       from: process.env.EMAIL_ID,
       to: email,
-      subject: "Your Verification Code",
+      subject: 'Your Verification Code',
       text: `Your OTP is ${code}`
     });
 
@@ -71,23 +64,27 @@ router.post('/send-code', async (req, res) => {
   }
 });
 
-// =========================
-// 2️⃣ Verify Email
-// =========================
 router.post('/verify-email', async (req, res) => {
   const { email, code, token } = req.body;
-  if (!email || !code || !token) return res.status(400).json({ error: 'Email, code, and token required' });
+  if (!email || !code || !token) {
+    return res.status(400).json({ error: 'Email, code, and token required' });
+  }
 
   try {
     const record = await pool.query('SELECT * FROM email_verification WHERE email = $1', [email]);
-    if (record.rows.length === 0) return res.status(400).json({ error: 'No OTP requested' });
+    if (record.rows.length === 0) {
+      return res.status(400).json({ error: 'No OTP requested' });
+    }
 
-    const savedCode = record.rows[0].code;
-    const savedToken = record.rows[0].token;
+    const { code: savedCode, token: savedToken } = record.rows[0];
 
-    if (savedToken !== token) return res.status(401).json({ error: 'Token mismatch' });
-    console.log(savedCode == parseInt(code));
-    if (parseInt(code) != savedCode) return res.status(400).json({ error: 'Invalid OTP' });
+    if (savedToken !== token) {
+      return res.status(401).json({ error: 'Token mismatch' });
+    }
+
+    if (parseInt(code, 10) !== savedCode) {
+      return res.status(400).json({ error: 'Invalid OTP' });
+    }
 
     const verifyToken = jwt.sign({ email }, process.env.JWT_SECRET, { expiresIn: '1h' });
 
@@ -103,9 +100,6 @@ router.post('/verify-email', async (req, res) => {
   }
 });
 
-// =========================
-// 3️⃣ Register (requires verified JWT)
-// =========================
 router.post('/register', async (req, res) => {
   const { firstName, lastName, email, password, phone, dob, address, token } = req.body;
   if (!firstName || !lastName || !email || !password || !phone || !dob || !address || !token) {
@@ -114,50 +108,71 @@ router.post('/register', async (req, res) => {
 
   try {
     const record = await pool.query('SELECT * FROM email_verification WHERE email = $1', [email]);
-    if (record.rows.length === 0) return res.status(400).json({ error: 'Email verification required' });
+    if (record.rows.length === 0) {
+      return res.status(400).json({ error: 'Email verification required' });
+    }
 
-    const savedToken = record.rows[0].token;
-    if (!savedToken || savedToken !== token) return res.status(401).json({ error: 'Invalid token' });
+    const { token: savedToken } = record.rows[0];
+    if (!savedToken || savedToken !== token) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
 
     jwt.verify(savedToken, process.env.JWT_SECRET);
 
     const userExists = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
-    if (userExists.rows.length > 0) return res.status(400).json({ error: 'User already exists' });
+    if (userExists.rows.length > 0) {
+      return res.status(400).json({ error: 'User already exists' });
+    }
 
     const hashedPassword = await bcrypt.hash(password, 10);
     const newUser = await pool.query(
       `INSERT INTO users (first_name, last_name, email, password_hash, phone, dob, address)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id, first_name, last_name, email, phone, dob, address`,
       [firstName, lastName, email, hashedPassword, phone, dob, address]
     );
 
     await pool.query('DELETE FROM email_verification WHERE email = $1', [email]);
 
-    const loginToken = jwt.sign({ userId: newUser.rows[0].id, email }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    const loginToken = jwt.sign(
+      { userId: newUser.rows[0].id, email },
+      process.env.JWT_SECRET,
+      { expiresIn: '1h' }
+    );
 
-    res.status(201).json({ message: 'Registration successful', user: newUser.rows[0], token: loginToken });
+    res.status(201).json({
+      message: 'Registration successful',
+      user: newUser.rows[0],
+      token: loginToken
+    });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// =========================
-// 🔵 Login endpoint
-// =========================
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email and password are required' });
+  }
 
   try {
     const user = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
-    if (user.rows.length === 0) return res.status(400).json({ error: 'Invalid credentials' });
+    if (user.rows.length === 0) {
+      return res.status(400).json({ error: 'Invalid credentials' });
+    }
 
     const isValidPassword = await bcrypt.compare(password, user.rows[0].password_hash);
-    if (!isValidPassword) return res.status(400).json({ error: 'Invalid credentials' });
+    if (!isValidPassword) {
+      return res.status(400).json({ error: 'Invalid credentials' });
+    }
 
-    const token = jwt.sign({ userId: user.rows[0].id, email }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    const token = jwt.sign(
+      { userId: user.rows[0].id, email },
+      process.env.JWT_SECRET,
+      { expiresIn: '1h' }
+    );
 
     res.json({ message: 'Login successful', token });
   } catch (error) {
@@ -166,9 +181,6 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// =========================
-// 🟣 Get Logged-in User Details
-// =========================
 router.get('/account', authMiddleware, async (req, res) => {
   try {
     const user = await pool.query(
@@ -176,17 +188,16 @@ router.get('/account', authMiddleware, async (req, res) => {
        FROM users WHERE id = $1`,
       [req.user.userId]
     );
-    if (user.rows.length === 0) return res.status(404).json({ error: "User not found" });
+    if (user.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
     res.json({ user: user.rows[0] });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: "Internal server error" });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// =========================
-// 🟠 Update user profile
-// =========================
 router.put('/account', authMiddleware, async (req, res) => {
   const { firstName, lastName, phone, dob, address } = req.body;
   try {
@@ -197,10 +208,10 @@ router.put('/account', authMiddleware, async (req, res) => {
        RETURNING id, first_name, last_name, email, phone, dob, address, created_at`,
       [firstName, lastName, phone, dob, address, req.user.userId]
     );
-    res.json({ message: "Account updated successfully", user: updatedUser.rows[0] });
+    res.json({ message: 'Account updated successfully', user: updatedUser.rows[0] });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: "Internal server error" });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
